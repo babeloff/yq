@@ -5,12 +5,11 @@
 package main
 
 import (
+	"fmt"
 	"io/fs"
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	//"github.com/phreed/yq/codegen"
-	//"github.com/phreed/yq/resources/page/page_generate"
 
 	"github.com/magefile/mage/mg"
 	"github.com/magefile/mage/sh"
@@ -19,36 +18,40 @@ import (
 
 const (
 	packageName  = "github.com/babeloff/yq"
-	noGitLdflags = "-X $PACKAGE/common/yq.buildDate=$BUILD_DATE"
-
-	PROJECT     = "yq"
-	IMPORT_PATH = "github.com/mikefarah/" + PROJECT
-
+	PROJECT      = "yq"
 	GITHUB_TOKEN = ""
-	DEV_IMAGE    = PROJECT + "_dev"
+	SPONSOR      = "babeloff"
 )
 
 var ROOT, root_err = os.Getwd()
+var DEV_IMAGE = fmt.Sprintf("%s_dev", PROJECT)
+var IMPORT_PATH = fmt.Sprintf("github.com/%s/%s", SPONSOR, PROJECT)
 
 var GIT_COMMIT, git_commit_err = sh.Output("git", "rev-parse", "--short", "HEAD")
-var GIT_DIRTY, git_dirty_err = sh.Output("git", "status", "--porcelain")
+var _, git_dirty_err = sh.Output("git", "status", "--porcelain")
+
+//if git_dirty_err == nil {
+var GIT_DIRTY = "+CHANGES"
+
+//} else {
+//	GIT_DIRTY = ""
+//}
 var GIT_DESCRIBE, git_describe_err = sh.Output("git", "describe", "--tags", "--always")
-var LDFLAGS = "-X main.GitCommit=" + GIT_COMMIT + GIT_DIRTY + " " +
-	"-X main.GitDescribe=" + GIT_DESCRIBE
+var LD_FLAGS = fmt.Sprintf("-X main.GitCommit=%s%s -X main.GitDescribe=%s",
+	GIT_COMMIT, GIT_DIRTY, GIT_DESCRIBE)
 
 var dockerRun = sh.RunCmd("docker",
 	"run", "--rm",
-	"-e", "LDFLAGS=\""+LDFLAGS+"\"",
-	"-e", "GITHUB_TOKEN=\""+GITHUB_TOKEN+"\"",
-	"-v", ROOT+"/vendor:/go/src",
-	"-v", ROOT+":/"+PROJECT+"/src/"+IMPORT_PATH,
-	"-w", "/"+PROJECT+"/src/"+IMPORT_PATH,
+	"-e", fmt.Sprintf("LDFLAGS=%s", LD_FLAGS),
+	"-e", fmt.Sprintf("GITHUB_TOKEN=\"%s\"", GITHUB_TOKEN),
+	"-v", fmt.Sprintf("%s/vendor:/go/src", ROOT),
+	"-v", fmt.Sprintf("%s:/%s/src/%s", ROOT, PROJECT, IMPORT_PATH),
+	"-w", fmt.Sprintf("/%s/src/%s", PROJECT, IMPORT_PATH),
 	DEV_IMAGE)
 
-// allow user to override go executable by running as GOEXE=xxx make ... on unix-like systems
-var goexe = "go"
+var Default = Install
 
-// Clean project
+// Uninstall project.
 func Clean() error {
 	rm_bin_err := os.RemoveAll("bin")
 	if rm_bin_err != nil {
@@ -62,19 +65,25 @@ func Clean() error {
 	if rm_cover_err != nil {
 		return rm_cover_err
 	}
-	rm_out_err := os.RemoveAll("*.out")
-	if rm_out_err != nil {
-		return rm_out_err
-	}
 
-	clean_err := sh.Run(goexe, "clean", "-i", packageName)
-	if clean_err != nil {
-		return clean_err
+	files, files_err := filepath.Glob("*.out")
+	if files_err != nil {
+		panic(files_err)
 	}
+	for _, f := range files {
+		if rm_err := os.Remove(f); rm_err != nil {
+			panic(rm_err)
+		}
+	}
+	//clean_err := sh.Run("go", "clean", "-i", packageName)
+	//if clean_err != nil {
+	//	return clean_err
+	//}
 
 	return nil
 }
 
+// Prefix before other make targets to run in your local dev environment.
 func Local() error {
 	dockerRun()
 	os.Mkdir("tmp", 0755)
@@ -82,6 +91,7 @@ func Local() error {
 	return nil
 }
 
+// Configure the docker environment.
 func Prepare() error {
 	delta, _ := target.Dir("tmp/dev_image_id",
 		"Dockerfile.dev", "scripts/devtools.sh")
@@ -103,7 +113,7 @@ func Prepare() error {
 	return nil
 }
 
-// Build yq binary.
+// Construct the yq binary.
 func Build() error {
 	delta, _ := target.Dir("build/dev",
 		"test", "*.go")
@@ -111,12 +121,9 @@ func Build() error {
 		return nil
 	}
 
-	mk_err := os.Mkdir("bin", 0755)
-	if mk_err != nil {
-		return mk_err
-	}
+	os.Mkdir("bin", 0755)
 
-	dockerRun("go", "build", "--ldflags", LDFLAGS)
+	dockerRun("go", "build", "--ldflags", LD_FLAGS)
 	dockerRun("bash", "./scripts/acceptance.sh")
 	return nil
 }
@@ -135,7 +142,7 @@ func Xcompile() error {
 	return nil
 }
 
-// Install yq.
+// Construct and install yq.
 func Install() error {
 	mg.Deps(Build)
 	dockerRun("go", "install")
@@ -189,7 +196,7 @@ func Cover() error {
 	return nil
 }
 
-// Clean the directory tree of produced artifacts.
+// Publish the product.
 func Release() error {
 	mg.Deps(Xcompile)
 	dockerRun("bash", "./scripts/publish.sh")
