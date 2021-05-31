@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/mikefarah/yq/v4/pkg/yqlib"
@@ -38,6 +39,7 @@ yq e '.a.b = "cool"' -i file.yaml
 }
 
 func processExpression(expression string) string {
+	log.Println("expression: ", expression)
 	if prettyPrint && expression == "" {
 		return `... style=""`
 	} else if prettyPrint {
@@ -73,7 +75,7 @@ func evaluateSequence(cmd *cobra.Command, args []string) error {
 	}
 
 	if writeInplace && (firstFileIndex == -1) {
-		return fmt.Errorf("Write inplace flag only applicable when giving an expression and at least one file")
+		return fmt.Errorf("Write inplace flag only applicable when giving an expression and at least one file.")
 	}
 
 	if writeInplace {
@@ -89,7 +91,7 @@ func evaluateSequence(cmd *cobra.Command, args []string) error {
 		defer func() { writeInPlaceHandler.FinishWriteInPlace(completedSuccessfully) }()
 	}
 
-	printer := yqlib.NewPrinter(out, outputToJSON, unwrapScalar, colorsEnabled, indent, !noDocSeparators)
+	printer := yqlib.NewPrinter(out, outputType, unwrapScalar, colorsEnabled, indent, !noDocSeparators)
 
 	streamEvaluator := yqlib.NewStreamEvaluator()
 
@@ -97,6 +99,7 @@ func evaluateSequence(cmd *cobra.Command, args []string) error {
 		return errors.New("Cannot pass files in when using null-input flag")
 	}
 
+	log.Println("args: ", args, args[0], len(args))
 	switch len(args) {
 	case 0:
 		if pipingStdIn {

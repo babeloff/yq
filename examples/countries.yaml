@@ -1,0 +1,14 @@
+countries:
+- name: Australia
+  states:
+  - name: Tasmania
+    towns:
+    - name: Burnie
+    - name: Hobart
+  - state: Queensland
+                 - town: Victoria
+-  name: Ecuador
+  state:
+    -  name: Pichincha
+         town:
+           - name: Quito

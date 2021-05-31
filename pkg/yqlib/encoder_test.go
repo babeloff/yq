@@ -9,6 +9,13 @@ import (
 	"github.com/mikefarah/yq/v4/test"
 )
 
+func yamlToProps(sampleYaml string, indent int) string {
+	var output bytes.Buffer
+	writer := bufio.NewWriter(&output)
+	writer.Flush()
+	return strings.TrimSuffix(output.String(), "\n")
+}
+
 func yamlToJson(sampleYaml string, indent int) string {
 	var output bytes.Buffer
 	writer := bufio.NewWriter(&output)
@@ -48,7 +55,34 @@ banana:
 	test.AssertResult(t, expectedJson, actualJson)
 }
 
+func TestPropertiesEncoderPreservesObjectOrder(t *testing.T) {
+	var sampleYaml = `zabbix: winner
+apple: great
+banana:
+- {cobra: kai, angus: bob}
+`
+	var expectedJson = `{
+  "zabbix": "winner",
+  "apple": "great",
+  "banana": [
+    {
+      "cobra": "kai",
+      "angus": "bob"
+    }
+  ]
+}`
+	var actualJson = yamlToJson(sampleYaml, 2)
+	test.AssertResult(t, expectedJson, actualJson)
+}
+
 func TestJsonEncoderDoesNotEscapeHTMLChars(t *testing.T) {
+	var sampleYaml = `build: "( ./lint && ./format && ./compile ) < src.code"`
+	var expectedJson = `{"build":"( ./lint && ./format && ./compile ) < src.code"}`
+	var actualJson = yamlToJson(sampleYaml, 0)
+	test.AssertResult(t, expectedJson, actualJson)
+}
+
+func TestPropertiesEncoderDoesNotEscapeHTMLChars(t *testing.T) {
 	var sampleYaml = `build: "( ./lint && ./format && ./compile ) < src.code"`
 	var expectedJson = `{"build":"( ./lint && ./format && ./compile ) < src.code"}`
 	var actualJson = yamlToJson(sampleYaml, 0)

@@ -3,6 +3,7 @@ package yqlib
 import (
 	"bufio"
 	"container/list"
+	"github.com/mikefarah/yq/v4/cmd"
 	"io"
 
 	yaml "gopkg.in/yaml.v3"
@@ -14,7 +15,8 @@ type Printer interface {
 }
 
 type resultsPrinter struct {
-	outputToJSON       bool
+	outputToProps      bool
+	outputType         cmd.OutputTypeEnum
 	unwrapScalar       bool
 	colorsEnabled      bool
 	indent             int
@@ -27,14 +29,14 @@ type resultsPrinter struct {
 	treeNavigator      DataTreeNavigator
 }
 
-func NewPrinter(writer io.Writer, outputToJSON bool, unwrapScalar bool, colorsEnabled bool, indent int, printDocSeparators bool) Printer {
+func NewPrinter(writer io.Writer, outType cmd.OutputTypeEnum, unwrapScalar bool, colorsEnabled bool, indent int, printDocSeparators bool) Printer {
 	return &resultsPrinter{
 		writer:             writer,
-		outputToJSON:       outputToJSON,
+		outputType:         outType,
 		unwrapScalar:       unwrapScalar,
 		colorsEnabled:      colorsEnabled,
 		indent:             indent,
-		printDocSeparators: !outputToJSON && printDocSeparators,
+		printDocSeparators: outType == cmd.ToJson && printDocSeparators,
 		firstTimePrinting:  true,
 		treeNavigator:      NewDataTreeNavigator(),
 	}
@@ -49,10 +51,10 @@ func (p *resultsPrinter) printNode(node *yaml.Node, writer io.Writer) error {
 		(node.Tag != "!!bool" || node.Value != "false"))
 
 	var encoder Encoder
-	if node.Kind == yaml.ScalarNode && p.unwrapScalar && !p.outputToJSON {
+	if node.Kind == yaml.ScalarNode && p.unwrapScalar && p.outputType != cmd.ToJson {
 		return p.writeString(writer, node.Value+"\n")
 	}
-	if p.outputToJSON {
+	if p.outputType == cmd.ToJson {
 		encoder = NewJsonEncoder(writer, p.indent)
 	} else {
 		encoder = NewYamlEncoder(writer, p.indent, p.colorsEnabled)
@@ -74,7 +76,7 @@ func (p *resultsPrinter) safelyFlush(writer *bufio.Writer) {
 
 func (p *resultsPrinter) PrintResults(matchingNodes *list.List) error {
 	log.Debug("PrintResults for %v matches", matchingNodes.Len())
-	if p.outputToJSON {
+	if p.outputType == cmd.ToJson {
 		explodeOp := Operation{OperationType: explodeOpType}
 		explodeNode := ExpressionNode{Operation: &explodeOp}
 		context, err := p.treeNavigator.GetMatchingNodes(Context{MatchingNodes: matchingNodes}, &explodeNode)

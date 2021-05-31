@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/thediveo/enumflag"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -40,7 +41,16 @@ func New() *cobra.Command {
 	}
 
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose mode")
-	rootCmd.PersistentFlags().BoolVarP(&outputToJSON, "tojson", "j", false, "output as json. Set indent to 0 to print json in one line.")
+
+	rootCmd.PersistentFlags().VarP(
+		enumflag.New(&inputType, "input-type", InputModeIds, enumflag.EnumCaseInsensitive),
+		"from-type", "f",
+		"type of the input; can be 'yaml', 'json', or 'props' [default: yaml]")
+	rootCmd.PersistentFlags().VarP(
+		enumflag.New(&outputType, "output-type", OutputModeIds, enumflag.EnumCaseInsensitive),
+		"to-type", "t",
+		"type of the output; can be 'yaml', 'json', or 'props' [default: yaml]")
+
 	rootCmd.PersistentFlags().BoolVarP(&nullInput, "null-input", "n", false, "Don't read input, simply evaluate the expression given. Useful for creating yaml docs from scratch.")
 	rootCmd.PersistentFlags().BoolVarP(&noDocSeparators, "no-doc", "N", false, "Don't print document separators (---)")
 
