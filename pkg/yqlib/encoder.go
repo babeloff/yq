@@ -16,7 +16,7 @@ type Encoder interface {
 type yamlEncoder struct {
 	destination io.Writer
 	indent      int
-	colorise    bool
+	colorize    bool
 	firstDoc    bool
 }
 
@@ -31,7 +31,7 @@ func (ye *yamlEncoder) Encode(node *yaml.Node) error {
 
 	destination := ye.destination
 	tempBuffer := bytes.NewBuffer(nil)
-	if ye.colorise {
+	if ye.colorize {
 		destination = tempBuffer
 	}
 
@@ -49,7 +49,7 @@ func (ye *yamlEncoder) Encode(node *yaml.Node) error {
 		return err
 	}
 
-	if ye.colorise {
+	if ye.colorize {
 		return colorizeAndPrint(tempBuffer.Bytes(), ye.destination)
 	}
 	return nil
@@ -57,6 +57,14 @@ func (ye *yamlEncoder) Encode(node *yaml.Node) error {
 
 type jsonEncoder struct {
 	encoder *json.Encoder
+}
+
+type propsEncoder struct {
+	//encoder *props.Encoder
+}
+
+func (p propsEncoder) Encode(node *yaml.Node) error {
+	panic("implement me")
 }
 
 func mapKeysToStrings(node *yaml.Node) {
@@ -85,6 +93,20 @@ func NewJsonEncoder(destination io.Writer, indent int) Encoder {
 	}
 	encoder.SetIndent("", indentString)
 	return &jsonEncoder{encoder}
+}
+
+func NewPropsEncoder(destination io.Writer, indent int) Encoder {
+	//var encoder = props.NewEncoder(destination)
+	//encoder.SetEscapeHTML(false) // do not escape html chars e.g. &, <, >
+	//
+	//var indentString = ""
+	//
+	//for index := 0; index < indent; index++ {
+	//	indentString = indentString + " "
+	//}
+	//encoder.SetIndent("", indentString)
+	//return &propsEncoder{encoder}
+	return nil
 }
 
 func (je *jsonEncoder) Encode(node *yaml.Node) error {

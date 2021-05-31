@@ -54,9 +54,14 @@ func (p *resultsPrinter) printNode(node *yaml.Node, writer io.Writer) error {
 	if node.Kind == yaml.ScalarNode && p.unwrapScalar && p.outputType != cmd.ToJson {
 		return p.writeString(writer, node.Value+"\n")
 	}
-	if p.outputType == cmd.ToJson {
+	switch p.outputType {
+	case cmd.ToJson:
 		encoder = NewJsonEncoder(writer, p.indent)
-	} else {
+	case cmd.ToProps:
+		encoder = NewPropsEncoder(writer, p.indent)
+	case cmd.ToYaml:
+		encoder = NewYamlEncoder(writer, p.indent, p.colorsEnabled)
+	default:
 		encoder = NewYamlEncoder(writer, p.indent, p.colorsEnabled)
 	}
 	return encoder.Encode(node)

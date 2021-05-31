@@ -1,345 +1,203 @@
 // +build mage
 
+// Usage:
+//	Develop / Test Commands
 package main
 
 import (
-    "bytes"
-    "errors"
-    "fmt"
-    "io/ioutil"
-    "os"
-    "path"
-    "path/filepath"
-    "runtime"
-    "strings"
-    "sync"
-    "time"
+	"io/fs"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	//"github.com/phreed/yq/codegen"
+	//"github.com/phreed/yq/resources/page/page_generate"
 
-    //"github.com/phreed/yq/codegen"
-    //"github.com/phreed/yq/resources/page/page_generate"
-
-    "github.com/magefile/mage/mg"
-    "github.com/magefile/mage/sh"
+	"github.com/magefile/mage/mg"
+	"github.com/magefile/mage/sh"
+	"github.com/magefile/mage/target"
 )
 
 const (
-    packageName  = "github.com/phreed/yq"
-    noGitLdflags = "-X $PACKAGE/common/yq.buildDate=$BUILD_DATE"
+	packageName  = "github.com/babeloff/yq"
+	noGitLdflags = "-X $PACKAGE/common/yq.buildDate=$BUILD_DATE"
+
+	PROJECT     = "yq"
+	IMPORT_PATH = "github.com/mikefarah/" + PROJECT
+
+	GITHUB_TOKEN = ""
+	DEV_IMAGE    = PROJECT + "_dev"
 )
 
-var ldflags = "-X $PACKAGE/common/yq.commitHash=$COMMIT_HASH -X $PACKAGE/common/yq.buildDate=$BUILD_DATE"
+var ROOT, root_err = os.Getwd()
+
+var GIT_COMMIT, git_commit_err = sh.Output("git", "rev-parse", "--short", "HEAD")
+var GIT_DIRTY, git_dirty_err = sh.Output("git", "status", "--porcelain")
+var GIT_DESCRIBE, git_describe_err = sh.Output("git", "describe", "--tags", "--always")
+var LDFLAGS = "-X main.GitCommit=" + GIT_COMMIT + GIT_DIRTY + " " +
+	"-X main.GitDescribe=" + GIT_DESCRIBE
+
+var dockerRun = sh.RunCmd("docker",
+	"run", "--rm",
+	"-e", "LDFLAGS=\""+LDFLAGS+"\"",
+	"-e", "GITHUB_TOKEN=\""+GITHUB_TOKEN+"\"",
+	"-v", ROOT+"/vendor:/go/src",
+	"-v", ROOT+":/"+PROJECT+"/src/"+IMPORT_PATH,
+	"-w", "/"+PROJECT+"/src/"+IMPORT_PATH,
+	DEV_IMAGE)
 
 // allow user to override go executable by running as GOEXE=xxx make ... on unix-like systems
 var goexe = "go"
 
-func init() {
-    if exe := os.Getenv("GOEXE"); exe != "" {
-        goexe = exe
-    }
+// Clean project
+func Clean() error {
+	rm_bin_err := os.RemoveAll("bin")
+	if rm_bin_err != nil {
+		return rm_bin_err
+	}
+	rm_build_err := os.RemoveAll("build")
+	if rm_build_err != nil {
+		return rm_build_err
+	}
+	rm_cover_err := os.RemoveAll("cover")
+	if rm_cover_err != nil {
+		return rm_cover_err
+	}
+	rm_out_err := os.RemoveAll("*.out")
+	if rm_out_err != nil {
+		return rm_out_err
+	}
 
-    // We want to use Go 1.11 modules even if the source lives inside GOPATH.
-    // The default is "auto".
-    os.Setenv("GO111MODULE", "on")
+	clean_err := sh.Run(goexe, "clean", "-i", packageName)
+	if clean_err != nil {
+		return clean_err
+	}
+
+	return nil
 }
 
-func runWith(env map[string]string, cmd string, inArgs ...interface{}) error {
-    s := argsToStrings(inArgs...)
-    return sh.RunWith(env, cmd, s...)
+func Local() error {
+	dockerRun()
+	os.Mkdir("tmp", 0755)
+	ioutil.WriteFile("tmp/dev_image-id", []byte(""), 0644)
+	return nil
 }
 
-// Build yq binary
+func Prepare() error {
+	delta, _ := target.Dir("tmp/dev_image_id",
+		"Dockerfile.dev", "scripts/devtools.sh")
+	if !delta {
+		return nil
+	}
+
+	os.Mkdir("tmp", 0755)
+	sh.Run("docker", "rmi", "-f", DEV_IMAGE)
+	sh.Run("docker", "build",
+		"-t", DEV_IMAGE,
+		"-f", "Dockerfile.dev",
+		".")
+	docker_id, _ := sh.Output("docker", "inspect",
+		"-t", "{{ .ID }}",
+		DEV_IMAGE,
+		"-f", "Dockerfile.dev")
+	ioutil.WriteFile("tmp/dev_image-id", []byte(docker_id), 0644)
+	return nil
+}
+
+// Build yq binary.
 func Build() error {
-    return runWith(flagEnv(), goexe, "build", "-ldflags", ldflags, buildFlags(), "-tags", buildTags(), packageName)
+	delta, _ := target.Dir("build/dev",
+		"test", "*.go")
+	if !delta {
+		return nil
+	}
+
+	mk_err := os.Mkdir("bin", 0755)
+	if mk_err != nil {
+		return mk_err
+	}
+
+	dockerRun("go", "build", "--ldflags", LDFLAGS)
+	dockerRun("bash", "./scripts/acceptance.sh")
+	return nil
 }
 
-// Build yq binary with race detector enabled
-func BuildRace() error {
-    return runWith(flagEnv(), goexe, "build", "-race", "-ldflags", ldflags, buildFlags(), "-tags", buildTags(), packageName)
+// Build cross-compiled binaries of yq.
+func Xcompile() error {
+	mg.Deps(Check)
+
+	os.RemoveAll("build")
+	os.Mkdir("build", 0755)
+	dockerRun("bash", "./scripts/xcompile.sh")
+	filepath.Walk("build",
+		func(path string, info fs.FileInfo, err error) error {
+			return os.Chmod(path, 0755)
+		})
+	return nil
 }
 
-// Install yq binary
+// Install yq.
 func Install() error {
-    return runWith(flagEnv(), goexe, "install", "-ldflags", ldflags, buildFlags(), "-tags", buildTags(), packageName)
+	mg.Deps(Build)
+	dockerRun("go", "install")
+	return nil
 }
 
-// Uninstall yq binary
-func Uninstall() error {
-    return sh.Run(goexe, "clean", "-i", packageName)
+// Install dependencies to vendor directory.
+func Vendor() error {
+	mg.Deps(Prepare)
+	dockerRun("go", "mod", "vendor")
+	return nil
 }
 
-func flagEnv() map[string]string {
-    hash, _ := sh.Output("git", "rev-parse", "--short", "HEAD")
-    return map[string]string{
-        "PACKAGE":     packageName,
-        "COMMIT_HASH": hash,
-        "BUILD_DATE":  time.Now().Format("2006-01-02T15:04:05Z0700"),
-    }
+// Run code formatter.
+func Format() error {
+	mg.Deps(Vendor)
+	dockerRun("bash", "./scripts/format.sh")
+	return nil
 }
 
-// Generate docs helper
-func GenDocsHelper() error {
-    return runCmd(flagEnv(), goexe, "run", "-tags", buildTags(), "main.go", "gen", "docshelper")
+// Run static code analysis (lint).
+func Check() error {
+	mg.Deps(Format)
+	dockerRun("bash", "./scripts/check.sh")
+	return nil
 }
 
-// Build yq without git info
-func BuildNoGitInfo() error {
-    ldflags = noGitLdflags
-    return Build()
+// Run gosec.
+func Secure() error {
+	dockerRun("bash", "./scripts/secure.sh")
+	return nil
 }
 
-var docker = sh.RunCmd("docker")
-
-// Build yq Docker container
-func Docker() error {
-    if err := docker("build", "-t", "yq", "."); err != nil {
-        return err
-    }
-    // yes ignore errors here
-    docker("rm", "-f", "yq-build")
-    if err := docker("run", "--name", "yq-build", "yq ls /go/bin"); err != nil {
-        return err
-    }
-    if err := docker("cp", "yq-build:/go/bin/yq", "."); err != nil {
-        return err
-    }
-    return docker("rm", "yq-build")
-}
-
-// Run tests and linters
-func Check() {
-    if strings.Contains(runtime.Version(), "1.8") {
-        // Go 1.8 doesn't play along with go test ./... and /vendor.
-        // We could fix that, but that would take time.
-        fmt.Printf("Skip Check on %s\n", runtime.Version())
-        return
-    }
-
-    if runtime.GOARCH == "amd64" && runtime.GOOS != "darwin" {
-        mg.Deps(Test386)
-    } else {
-        fmt.Printf("Skip Test386 on %s and/or %s\n", runtime.GOARCH, runtime.GOOS)
-    }
-
-    mg.Deps(Fmt, Vet)
-
-    // don't run two tests in parallel, they saturate the CPUs anyway, and running two
-    // causes memory issues in CI.
-    mg.Deps(TestRace)
-}
-
-func testGoFlags() string {
-    if isCI() {
-        return ""
-    }
-
-    return "-test.short"
-}
-
-// Run tests in 32-bit mode
-// Note that we don't run with the extended tag. Currently not supported in 32 bit.
-func Test386() error {
-    env := map[string]string{"GOARCH": "386", "GOFLAGS": testGoFlags()}
-    return runCmd(env, goexe, "test", "./...")
-}
-
-// Run tests
+// Run tests on project.
 func Test() error {
-    env := map[string]string{"GOFLAGS": testGoFlags()}
-    return runCmd(env, goexe, "test", "./...", buildFlags(), "-tags", buildTags())
+	dockerRun("bash", "./scripts/test.sh")
+	return nil
 }
 
-// Run tests with race detector
-func TestRace() error {
-    env := map[string]string{"GOFLAGS": testGoFlags()}
-    return runCmd(env, goexe, "test", "-race", "./...", buildFlags(), "-tags", buildTags())
+// Run tests and capture code coverage metrics on project.
+func Cover() error {
+	mg.Deps(Check)
+
+	os.RemoveAll("cover")
+	os.Mkdir("cover", 0755)
+	dockerRun("bash", "./scripts/coverage.sh")
+	filepath.Walk("cover",
+		func(path string, info fs.FileInfo, err error) error {
+			return os.Chmod(path, 0755)
+		})
+	return nil
 }
 
-// Run gofmt linter
-func Fmt() error {
-    if !isGoLatest() {
-        return nil
-    }
-    pkgs, err := yqPackages()
-    if err != nil {
-        return err
-    }
-    failed := false
-    first := true
-    for _, pkg := range pkgs {
-        files, err := filepath.Glob(filepath.Join(pkg, "*.go"))
-        if err != nil {
-            return nil
-        }
-        for _, f := range files {
-            // gofmt doesn't exit with non-zero when it finds unformatted code
-            // so we have to explicitly look for output, and if we find any, we
-            // should fail this target.
-            s, err := sh.Output("gofmt", "-l", f)
-            if err != nil {
-                fmt.Printf("ERROR: running gofmt on %q: %v\n", f, err)
-                failed = true
-            }
-            if s != "" {
-                if first {
-                    fmt.Println("The following files are not gofmt'ed:")
-                    first = false
-                }
-                failed = true
-                fmt.Println(s)
-            }
-        }
-    }
-    if failed {
-        return errors.New("improperly formatted go files")
-    }
-    return nil
+// Clean the directory tree of produced artifacts.
+func Release() error {
+	mg.Deps(Xcompile)
+	dockerRun("bash", "./scripts/publish.sh")
+	return nil
 }
 
-var (
-    pkgPrefixLen = len("github.com/phreed/yq")
-    pkgs         []string
-    pkgsInit     sync.Once
-)
-
-func yqPackages() ([]string, error) {
-    var err error
-    pkgsInit.Do(func() {
-        var s string
-        s, err = sh.Output(goexe, "list", "./...")
-        if err != nil {
-            return
-        }
-        pkgs = strings.Split(s, "\n")
-        for i := range pkgs {
-            pkgs[i] = "." + pkgs[i][pkgPrefixLen:]
-        }
-    })
-    return pkgs, err
-}
-
-// Run golint linter
-func Lint() error {
-    pkgs, err := yqPackages()
-    if err != nil {
-        return err
-    }
-    failed := false
-    for _, pkg := range pkgs {
-        // We don't actually want to fail this target if we find golint errors,
-        // so we don't pass -set_exit_status, but we still print out any failures.
-        if _, err := sh.Exec(nil, os.Stderr, nil, "golint", pkg); err != nil {
-            fmt.Printf("ERROR: running go lint on %q: %v\n", pkg, err)
-            failed = true
-        }
-    }
-    if failed {
-        return errors.New("errors running golint")
-    }
-    return nil
-}
-
-//  Run go vet linter
-func Vet() error {
-    if err := sh.Run(goexe, "vet", "./..."); err != nil {
-        return fmt.Errorf("error running go vet: %v", err)
-    }
-    return nil
-}
-
-// Generate test coverage report
-func TestCoverHTML() error {
-    const (
-        coverAll = "coverage-all.out"
-        cover    = "coverage.out"
-    )
-    f, err := os.Create(coverAll)
-    if err != nil {
-        return err
-    }
-    defer f.Close()
-    if _, err := f.Write([]byte("mode: count")); err != nil {
-        return err
-    }
-    pkgs, err := yqPackages()
-    if err != nil {
-        return err
-    }
-    for _, pkg := range pkgs {
-        if err := sh.Run(goexe, "test", "-coverprofile="+cover, "-covermode=count", pkg); err != nil {
-            return err
-        }
-        b, err := ioutil.ReadFile(cover)
-        if err != nil {
-            if os.IsNotExist(err) {
-                continue
-            }
-            return err
-        }
-        idx := bytes.Index(b, []byte{'\n'})
-        b = b[idx+1:]
-        if _, err := f.Write(b); err != nil {
-            return err
-        }
-    }
-    if err := f.Close(); err != nil {
-        return err
-    }
-    return sh.Run(goexe, "tool", "cover", "-html="+coverAll)
-}
-
-func runCmd(env map[string]string, cmd string, args ...interface{}) error {
-    if mg.Verbose() {
-        return runWith(env, cmd, args...)
-    }
-    output, err := sh.OutputWith(env, cmd, argsToStrings(args...)...)
-    if err != nil {
-        fmt.Fprint(os.Stderr, output)
-    }
-
-    return err
-}
-
-func isGoLatest() bool {
-    return strings.Contains(runtime.Version(), "1.14")
-}
-
-func isCI() bool {
-    return os.Getenv("CI") != ""
-}
-
-func buildFlags() []string {
-    if runtime.GOOS == "windows" {
-        return []string{"-buildmode", "exe"}
-    }
-    return nil
-}
-
-func buildTags() string {
-    // To build the extended Yq SCSS/SASS enabled version, build with
-    // YQ_BUILD_TAGS=extended mage install etc.
-    // To build without `yq deploy` for smaller binary, use YQ_BUILD_TAGS=nodeploy
-    if envtags := os.Getenv("YQ_BUILD_TAGS"); envtags != "" {
-        return envtags
-    }
-    return "none"
-}
-
-func argsToStrings(v ...interface{}) []string {
-    var args []string
-    for _, arg := range v {
-        switch v := arg.(tyqe) {
-        case string:
-            if v != "" {
-                args = append(args, v)
-            }
-        case []string:
-            if v != nil {
-                args = append(args, v...)
-            }
-        default:
-            panic("invalid type")
-        }
-    }
-
-    return args
+// utility: Configures Minishfit/Docker directory mounts.
+func Setup() error {
+	dockerRun("bash", "./scripts/setup.sh")
+	return nil
 }
