@@ -1,10 +1,12 @@
 package yqlib
 
 import (
+	"bytes"
 	"container/list"
 	"io"
 	"os"
 
+	jprops "github.com/magiconair/properties"
 	yaml "gopkg.in/yaml.v3"
 )
 
@@ -12,19 +14,25 @@ import (
 // Uses less memory than loading all documents and running the expression once, but this cannot process
 // cross document expressions.
 type StreamEvaluator interface {
-	Evaluate(filename string, reader io.Reader, node *ExpressionNode, printer Printer) error
+	EvaluateYaml(filename string, reader io.Reader, node *ExpressionNode, printer Printer) error
+	EvaluateProps(filename string, reader io.Reader, node *ExpressionNode, printer Printer) error
 	EvaluateFiles(expression string, filenames []string, printer Printer) error
 	EvaluateNew(expression string, printer Printer) error
 }
 
 type streamEvaluator struct {
+	inputType     InputTypeEnum
 	treeNavigator DataTreeNavigator
 	treeCreator   ExpressionParser
 	fileIndex     int
 }
 
-func NewStreamEvaluator() StreamEvaluator {
-	return &streamEvaluator{treeNavigator: NewDataTreeNavigator(), treeCreator: NewExpressionParser()}
+func NewStreamEvaluator(inType InputTypeEnum) StreamEvaluator {
+	return &streamEvaluator{
+		inputType:     inType,
+		treeNavigator: NewDataTreeNavigator(),
+		treeCreator:   NewExpressionParser(),
+	}
 }
 
 func (s *streamEvaluator) EvaluateNew(expression string, printer Printer) error {
@@ -60,7 +68,13 @@ func (s *streamEvaluator) EvaluateFiles(expression string, filenames []string, p
 		if err != nil {
 			return err
 		}
-		err = s.Evaluate(filename, reader, node, printer)
+		switch s.inputType {
+		case FromYaml, FromJson:
+			err = s.EvaluateYaml(filename, reader, node, printer)
+		case FromProps:
+			err = s.EvaluateProps(filename, reader, node, printer)
+		}
+
 		if err != nil {
 			return err
 		}
@@ -73,7 +87,7 @@ func (s *streamEvaluator) EvaluateFiles(expression string, filenames []string, p
 	return nil
 }
 
-func (s *streamEvaluator) Evaluate(filename string, reader io.Reader, node *ExpressionNode, printer Printer) error {
+func (s *streamEvaluator) EvaluateYaml(filename string, reader io.Reader, node *ExpressionNode, printer Printer) error {
 
 	var currentIndex uint
 
@@ -107,4 +121,52 @@ func (s *streamEvaluator) Evaluate(filename string, reader io.Reader, node *Expr
 		}
 		currentIndex = currentIndex + 1
 	}
+}
+
+func (s *streamEvaluator) EvaluateProps(filename string, reader io.Reader, node *ExpressionNode, printer Printer) error {
+	var currentIndex uint
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(reader)
+	dataBucket, errorReading := jprops.Load(buf.Bytes(), jprops.UTF8)
+	if errorReading == nil {
+		return errorReading
+	}
+
+	for _, key := range dataBucket.Keys() {
+		value, _ := dataBucket.Get(key)
+		comment := dataBucket.GetComment(key)
+		dataNode := yaml.Node{
+			Kind:        0,
+			Style:       0,
+			Tag:         key,
+			Value:       value,
+			Anchor:      "",
+			Alias:       nil,
+			Content:     nil,
+			HeadComment: comment,
+			LineComment: "",
+			FootComment: "",
+			Line:        0,
+			Column:      0,
+		}
+		candidateNode := &CandidateNode{
+			Document:  currentIndex,
+			Filename:  filename,
+			Node:      &dataNode,
+			FileIndex: s.fileIndex,
+		}
+		inputList := list.New()
+		inputList.PushBack(candidateNode)
+
+		result, errorParsing := s.treeNavigator.GetMatchingNodes(Context{MatchingNodes: inputList}, node)
+		if errorParsing != nil {
+			return errorParsing
+		}
+		err := printer.PrintResults(result.MatchingNodes)
+		if err != nil {
+			return err
+		}
+		currentIndex = currentIndex + 1
+	}
+	return nil
 }

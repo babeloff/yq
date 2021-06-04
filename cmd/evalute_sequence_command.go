@@ -93,7 +93,7 @@ func evaluateSequence(cmd *cobra.Command, args []string) error {
 
 	printer := yqlib.NewPrinter(out, outputType, unwrapScalar, colorsEnabled, indent, !noDocSeparators)
 
-	streamEvaluator := yqlib.NewStreamEvaluator()
+	streamEvaluator := yqlib.NewStreamEvaluator(inputType)
 
 	if nullInput && len(args) > 1 {
 		return errors.New("Cannot pass files in when using null-input flag")

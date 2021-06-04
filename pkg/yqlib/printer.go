@@ -3,7 +3,6 @@ package yqlib
 import (
 	"bufio"
 	"container/list"
-	"github.com/mikefarah/yq/v4/cmd"
 	"io"
 
 	yaml "gopkg.in/yaml.v3"
@@ -16,7 +15,7 @@ type Printer interface {
 
 type resultsPrinter struct {
 	outputToProps      bool
-	outputType         cmd.OutputTypeEnum
+	outputType         OutputTypeEnum
 	unwrapScalar       bool
 	colorsEnabled      bool
 	indent             int
@@ -29,14 +28,14 @@ type resultsPrinter struct {
 	treeNavigator      DataTreeNavigator
 }
 
-func NewPrinter(writer io.Writer, outType cmd.OutputTypeEnum, unwrapScalar bool, colorsEnabled bool, indent int, printDocSeparators bool) Printer {
+func NewPrinter(writer io.Writer, outType OutputTypeEnum, unwrapScalar bool, colorsEnabled bool, indent int, printDocSeparators bool) Printer {
 	return &resultsPrinter{
 		writer:             writer,
 		outputType:         outType,
 		unwrapScalar:       unwrapScalar,
 		colorsEnabled:      colorsEnabled,
 		indent:             indent,
-		printDocSeparators: outType == cmd.ToJson && printDocSeparators,
+		printDocSeparators: outType == ToJson && printDocSeparators,
 		firstTimePrinting:  true,
 		treeNavigator:      NewDataTreeNavigator(),
 	}
@@ -51,15 +50,15 @@ func (p *resultsPrinter) printNode(node *yaml.Node, writer io.Writer) error {
 		(node.Tag != "!!bool" || node.Value != "false"))
 
 	var encoder Encoder
-	if node.Kind == yaml.ScalarNode && p.unwrapScalar && p.outputType != cmd.ToJson {
+	if node.Kind == yaml.ScalarNode && p.unwrapScalar && p.outputType != ToJson {
 		return p.writeString(writer, node.Value+"\n")
 	}
 	switch p.outputType {
-	case cmd.ToJson:
+	case ToJson:
 		encoder = NewJsonEncoder(writer, p.indent)
-	case cmd.ToProps:
+	case ToProps:
 		encoder = NewPropsEncoder(writer, p.indent)
-	case cmd.ToYaml:
+	case ToYaml:
 		encoder = NewYamlEncoder(writer, p.indent, p.colorsEnabled)
 	default:
 		encoder = NewYamlEncoder(writer, p.indent, p.colorsEnabled)
@@ -81,7 +80,7 @@ func (p *resultsPrinter) safelyFlush(writer *bufio.Writer) {
 
 func (p *resultsPrinter) PrintResults(matchingNodes *list.List) error {
 	log.Debug("PrintResults for %v matches", matchingNodes.Len())
-	if p.outputType == cmd.ToJson {
+	if p.outputType == ToJson {
 		explodeOp := Operation{OperationType: explodeOpType}
 		explodeNode := ExpressionNode{Operation: &explodeOp}
 		context, err := p.treeNavigator.GetMatchingNodes(Context{MatchingNodes: matchingNodes}, &explodeNode)

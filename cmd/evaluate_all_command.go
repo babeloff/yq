@@ -86,7 +86,7 @@ func evaluateAll(cmd *cobra.Command, args []string) error {
 		}
 	case 1:
 		if nullInput {
-			err = yqlib.NewStreamEvaluator().EvaluateNew(processExpression(args[0]), printer)
+			err = yqlib.NewStreamEvaluator(inputType).EvaluateNew(processExpression(args[0]), printer)
 		} else {
 			err = allAtOnceEvaluator.EvaluateFiles(processExpression(""), []string{args[0]}, printer)
 		}

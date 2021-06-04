@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/mikefarah/yq/v4/pkg/yqlib"
 	"github.com/thediveo/enumflag"
 	"os"
 
@@ -43,11 +44,11 @@ func New() *cobra.Command {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose mode")
 
 	rootCmd.PersistentFlags().VarP(
-		enumflag.New(&inputType, "input-type", InputModeIds, enumflag.EnumCaseInsensitive),
+		enumflag.New(&inputType, "input-type", yqlib.InputModeIds, enumflag.EnumCaseInsensitive),
 		"from-type", "f",
 		"type of the input; can be 'yaml', 'json', or 'props' [default: yaml]")
 	rootCmd.PersistentFlags().VarP(
-		enumflag.New(&outputType, "output-type", OutputModeIds, enumflag.EnumCaseInsensitive),
+		enumflag.New(&outputType, "output-type", yqlib.OutputModeIds, enumflag.EnumCaseInsensitive),
 		"to-type", "t",
 		"type of the output; can be 'yaml', 'json', or 'props' [default: yaml]")
 
